@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
+  <title>Safety AR Simulation</title>
+
+  <script src="https://cdn.jsdelivr.net/gh/aframevr/aframe@1.5.0/dist/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.min.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+    /* ── HUD base ─────────────────────────────────────────────────── */
+    .hud {
+      position: fixed; z-index: 100; pointer-events: none;
+      transition: opacity .35s, transform .35s;
+    }
+    .hud.hidden { opacity: 0; pointer-events: none; }
+    .hud.visible { opacity: 1; pointer-events: auto; }
+
+    /* ── Hint bar ──────────────────────────────────────────────────── */
+    #hud-hint {
+      top: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,.55); color: #fff;
+      font-size: 13px; padding: 8px 20px; border-radius: 24px;
+      backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.12);
+      white-space: nowrap;
+    }
+
+    /* ── Room selector (top-right) ─────────────────────────────────── */
+    #hud-rooms {
+      top: 20px; right: 16px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .room-btn {
+      padding: 9px 16px; border-radius: 12px; border: none; cursor: pointer;
+      font-size: 13px; font-weight: 600; letter-spacing: .03em;
+      backdrop-filter: blur(10px); transition: all .2s;
+      pointer-events: auto;
+    }
+    .room-btn.fire    { background: rgba(216,90,48,.85); color: #fff; }
+    .room-btn.site    { background: rgba(186,117,23,.85); color: #fff; }
+    .room-btn.active  { box-shadow: 0 0 0 2px #fff; }
+
+    /* ── Floor selector (bottom panel, construction only) ──────────── */
+    #hud-floors {
+      bottom: 20px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+    }
+    #floor-row {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .floor-btn {
+      width: 48px; height: 48px; border-radius: 12px; border: none;
+      cursor: pointer; font-size: 12px; font-weight: 700;
+      background: rgba(186,117,23,.75); color: #fff;
+      backdrop-filter: blur(10px); transition: all .2s;
+      pointer-events: auto; display: flex; align-items: center;
+      justify-content: center; flex-direction: column; line-height: 1.2;
+    }
+    .floor-btn.active { background: rgba(186,117,23,1); box-shadow: 0 0 0 2px #fff; }
+    #btn-show-all {
+      padding: 8px 18px; border-radius: 24px; border: none; cursor: pointer;
+      font-size: 12px; font-weight: 600; background: rgba(255,255,255,.15);
+      color: #fff; backdrop-filter: blur(10px); pointer-events: auto;
+      border: 1px solid rgba(255,255,255,.25); transition: all .2s;
+    }
+    #btn-show-all:active { background: rgba(255,255,255,.3); }
+
+    /* ── Inspect HUD (bottom) ──────────────────────────────────────── */
+    #hud-inspect {
+      bottom: 0; left: 0; right: 0;
+      background: rgba(10,10,10,.75); backdrop-filter: blur(12px);
+      border-top: 1px solid rgba(255,255,255,.1);
+      padding: 16px 24px; display: flex; align-items: center; gap: 12px;
+      transform: translateY(100%);
+      transition: transform .35s cubic-bezier(.22,1,.36,1);
+    }
+    #hud-inspect.visible { transform: translateY(0); pointer-events: auto; }
+    #hud-label { flex: 1; color: #fff; font-size: 15px; font-weight: 500; }
+    #hud-sublabel { color: rgba(255,255,255,.5); font-size: 12px; margin-top: 2px; }
+    .inspect-action {
+      padding: 10px 20px; border-radius: 20px; border: none;
+      font-size: 13px; font-weight: 600; cursor: pointer; pointer-events: auto;
+    }
+    #btn-back { background: rgba(255,255,255,.12); color: #fff; }
+    #btn-use  { background: #D85A30; color: #fff; }
+
+    /* ── Drag hint ─────────────────────────────────────────────────── */
+    #hud-drag {
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: rgba(0,0,0,.5); color: #fff; font-size: 13px;
+      padding: 10px 20px; border-radius: 24px; backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,.15); pointer-events: none;
+      text-align: center;
+    }
+
+    /* ── Wrong feedback ────────────────────────────────────────────── */
+    #hud-wrong {
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: #7a1f1f; color: #fff; font-size: 14px;
+      padding: 12px 24px; border-radius: 12px; pointer-events: none;
+    }
+
+    /* ── Resolved overlay ──────────────────────────────────────────── */
+    #hud-resolved {
+      inset: 0; background: rgba(0,0,0,.82); backdrop-filter: blur(10px);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 18px; text-align: center; padding: 32px;
+    }
+    #resolved-icon {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: #1D9E75; display: flex; align-items: center;
+      justify-content: center; font-size: 28px;
+    }
+    #resolved-title { color: #fff; font-size: 22px; font-weight: 700; }
+    #resolved-sub   { color: rgba(255,255,255,.6); font-size: 14px; }
+    #btn-next {
+      padding: 14px 32px; border-radius: 28px; border: none;
+      background: #1D9E75; color: #fff; font-size: 15px; font-weight: 700;
+      cursor: pointer; pointer-events: auto; margin-top: 8px;
+    }
+
+    /* ── Crosshair ─────────────────────────────────────────────────── */
+    #crosshair {
+      top: 50%; left: 50%; transform: translate(-50%,-50%);
+      width: 20px; height: 20px; pointer-events: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute; background: rgba(255,255,255,.6);
+      border-radius: 2px;
+    }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+    #crosshair::after  { width: 100%; height: 2px; top: 50%; transform: translateY(-50%); }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════ HUD LAYER ══════════════════════════════════════ -->
+
+<div id="hud-hint"   class="hud visible">Point camera at Hiro marker</div>
+<div id="crosshair"  class="hud visible"></div>
+
+<!-- Room selector -->
+<div id="hud-rooms" class="hud visible">
+  <button class="room-btn fire active" onclick="switchRoom('fire')">🔥 Fire room</button>
+  <button class="room-btn site"        onclick="switchRoom('site')">🏗 Construction site</button>
+</div>
+
+<!-- Floor selector (construction site only) -->
+<div id="hud-floors" class="hud hidden">
+  <div id="floor-row">
+    <button class="floor-btn active" onclick="selectFloor(0)" id="fbtn-0">GF<br><span style="font-size:10px">Ground</span></button>
+    <button class="floor-btn"        onclick="selectFloor(1)" id="fbtn-1">1F<br><span style="font-size:10px">First</span></button>
+    <button class="floor-btn"        onclick="selectFloor(2)" id="fbtn-2">2F<br><span style="font-size:10px">Second</span></button>
+  </div>
+  <button id="btn-show-all" onclick="showAllFloors()">Show all floors</button>
+</div>
+
+<!-- Inspect panel -->
+<div id="hud-inspect" class="hud">
+  <div style="flex:1">
+    <div id="hud-label">Object</div>
+    <div id="hud-sublabel"></div>
+  </div>
+  <button class="inspect-action" id="btn-back" onclick="backFromInspect()">Put back</button>
+  <button class="inspect-action" id="btn-use"  onclick="useItem()" style="display:none">Use it</button>
+</div>
+
+<!-- Drag instruction -->
+<div id="hud-drag" class="hud hidden">Drag onto the hazard to resolve</div>
+
+<!-- Wrong item feedback -->
+<div id="hud-wrong" class="hud hidden">That won't work here</div>
+
+<!-- Resolved screen -->
+<div id="hud-resolved" class="hud hidden">
+  <div id="resolved-icon">✓</div>
+  <div id="resolved-title">Situation resolved!</div>
+  <div id="resolved-sub" id="resolved-sub"></div>
+  <button id="btn-next" onclick="nextRoom()">Next room →</button>
+</div>
+
+
+<!-- ══════════════════ AFRAME COMPONENTS ══════════════════════════════ -->
+<script>
+
+/* ── Global sim state ──────────────────────────────────────────────── */
+const SIM = {
+  state:       'EXPLORE',   // EXPLORE | INSPECT | INTERACT | RESOLVED
+  room:        'fire',      // 'fire' | 'site'
+  inspecting:  null,
+  dragging:    null,
+  activeFloor: 0,
+  allFloors:   false,
+};
+
+/* ── Utility: show/hide HUD elements ──────────────────────────────── */
+function hudShow(id)  { const el=document.getElementById(id); el.classList.add('visible'); el.classList.remove('hidden'); }
+function hudHide(id)  { const el=document.getElementById(id); el.classList.remove('visible'); el.classList.add('hidden'); }
+
+/* ── Wall transparency ─────────────────────────────────────────────── */
+AFRAME.registerComponent('wall-transparency', {
+  schema: {
+    frontMesh:  { type: 'string', default: 'Wall_Front' },
+    minOpacity: { default: 0.06 },
+    maxOpacity: { default: 0.32 },
+  },
+  init() {
+    this.mat    = null;
+    this.camDir = new THREE.Vector3();
+    this.markN  = new THREE.Vector3();
+    this.el.addEventListener('model-loaded', () => {
+      this.el.object3D.traverse(o => {
+        if (o.name !== this.data.frontMesh || !o.material) return;
+        o.material = o.material.clone();
+        o.material.transparent = true;
+        o.material.depthWrite  = false;
+        o.renderOrder          = -1;
+        this.mat = o.material;
+      });
+    });
+  },
+  tick() {
+    if (!this.mat) return;
+    const cam = document.querySelector('[camera]').object3D;
+    cam.getWorldDirection(this.camDir);
+    this.el.object3D.getWorldDirection(this.markN);
+    const dot = Math.abs(this.camDir.dot(this.markN));
+    this.mat.opacity = THREE.MathUtils.lerp(this.data.maxOpacity, this.data.minOpacity, dot);
+  }
+});
+
+/* ── Inspectable ───────────────────────────────────────────────────── */
+AFRAME.registerComponent('inspectable', {
+  schema: {
+    label:    { type: 'string' },
+    sublabel: { type: 'string', default: 'Tap to inspect' },
+    itemType: { type: 'string', default: '' },
+  },
+  init() {
+    this._origParent = null;
+    this._origPos    = new THREE.Vector3();
+    this._origRot    = new THREE.Euler();
+    this._origScale  = new THREE.Vector3();
+    this.el.addEventListener('click', () => {
+      if (SIM.state === 'EXPLORE') this.enterInspect();
+      else if (SIM.state === 'INSPECT' && SIM.inspecting === this.el) this.exitInspect(false);
+    });
+  },
+  enterInspect() {
+    SIM.state      = 'INSPECT';
+    SIM.inspecting = this.el;
+    const obj = this.el.object3D;
+    obj.getWorldPosition(this._origPos);
+    this._origRot.copy(obj.rotation);
+    obj.getWorldScale(this._origScale);
+    this._origParent = this.el.parentEl;
+
+    const camEl = document.querySelector('[camera]');
+    camEl.appendChild(this.el);
+    this.el.setAttribute('position', '0 -0.05 -0.35');
+    this.el.setAttribute('rotation', '0 0 0');
+    this.el.setAttribute('scale',    '0.12 0.12 0.12');
+
+    document.getElementById('hud-label').textContent    = this.data.label;
+    document.getElementById('hud-sublabel').textContent = this.data.sublabel;
+    document.getElementById('btn-use').style.display    = this.data.itemType ? 'block' : 'none';
+    document.getElementById('hud-inspect').classList.add('visible');
+    hudHide('hud-rooms');
+    hudHide('hud-floors');
+    hudHide('crosshair');
+  },
+  exitInspect(toInteract) {
+    this._origParent.appendChild(this.el);
+    if (!toInteract) {
+      this.el.object3D.position.copy(this._origPos);
+      this.el.object3D.rotation.copy(this._origRot);
+      this.el.object3D.scale.copy(this._origScale);
+      SIM.state      = 'EXPLORE';
+      SIM.inspecting = null;
+    } else {
+      this.el.object3D.position.set(0, 0.05, 0);
+      this.el.object3D.scale.copy(this._origScale);
+      SIM.state    = 'INTERACT';
+      SIM.dragging = this.el;
+      hudShow('hud-drag');
+    }
+    document.getElementById('hud-inspect').classList.remove('visible');
+    hudShow('hud-rooms');
+    if (SIM.room === 'site') hudShow('hud-floors');
+    hudShow('crosshair');
+  }
+});
+
+function backFromInspect() {
+  SIM.inspecting?.components?.inspectable?.exitInspect(false);
+}
+function useItem() {
+  SIM.inspecting?.components?.inspectable?.exitInspect(true);
+}
+
+/* ── Drag on marker plane ─────────────────────────────────────────── */
+AFRAME.registerComponent('drag-on-marker', {
+  init() {
+    this.plane    = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
+    this.ray      = new THREE.Raycaster();
+    this.touch    = new THREE.Vector2();
+    this.hit      = new THREE.Vector3();
+    this.cam      = null;
+    document.addEventListener('touchmove', e => {
+      if (SIM.state !== 'INTERACT' || !SIM.dragging) return;
+      e.preventDefault();
+      if (!this.cam) this.cam = document.querySelector('[camera]').getObject3D('camera');
+      this.touch.set(
+        (e.touches[0].clientX / window.innerWidth)  * 2 - 1,
+       -(e.touches[0].clientY / window.innerHeight) * 2 + 1
+      );
+      this.ray.setFromCamera(this.touch, this.cam);
+      this.ray.ray.intersectPlane(this.plane, this.hit);
+      const local = this.el.object3D.worldToLocal(this.hit.clone());
+      SIM.dragging.object3D.position.set(local.x, 0.05, local.z);
+    }, { passive: false });
+    // mouse drag for desktop testing
+    let mouseDown = false;
+    document.addEventListener('mousedown', () => { if(SIM.state==='INTERACT') mouseDown=true; });
+    document.addEventListener('mouseup',   () => mouseDown=false);
+    document.addEventListener('mousemove', e => {
+      if (!mouseDown || SIM.state!=='INTERACT'||!SIM.dragging) return;
+      if (!this.cam) this.cam = document.querySelector('[camera]').getObject3D('camera');
+      this.touch.set(
+        (e.clientX/window.innerWidth)*2-1,
+       -(e.clientY/window.innerHeight)*2+1
+      );
+      this.ray.setFromCamera(this.touch, this.cam);
+      this.ray.ray.intersectPlane(this.plane, this.hit);
+      const local = this.el.object3D.worldToLocal(this.hit.clone());
+      SIM.dragging.object3D.position.set(local.x, 0.05, local.z);
+    });
+  }
+});
+
+/* ── Drop zone ─────────────────────────────────────────────────────── */
+AFRAME.registerComponent('drop-zone', {
+  schema: {
+    accepts: { type: 'string' },
+    radius:  { default: 0.12 },
+  },
+  tick() {
+    if (SIM.state !== 'INTERACT' || !SIM.dragging) return;
+    const dragPos = SIM.dragging.object3D.position;
+    const zonePos = this.el.object3D.position;
+    if (dragPos.distanceTo(zonePos) > this.data.radius) return;
+
+    const itemType = SIM.dragging.components?.inspectable?.data?.itemType;
+    if (itemType !== this.data.accepts) {
+      this.wrongFeedback(); return;
+    }
+    this.resolve();
+  },
+  resolve() {
+    SIM.state = 'RESOLVED';
+    SIM.dragging.setAttribute('visible', false);
+    SIM.dragging = null;
+    hudHide('hud-drag');
+    // hide event visual
+    const evt = this.el.parentEl.querySelector('[event-trigger]');
+    if (evt) evt.setAttribute('visible', false);
+
+    const labels = { fire: 'Fire extinguished safely.', site: 'Electrical fault contained.' };
+    document.getElementById('resolved-sub').textContent = labels[SIM.room] || 'Well done.';
+    hudShow('hud-resolved');
+    hudHide('hud-rooms');
+    hudHide('hud-floors');
+  },
+  wrongFeedback() {
+    hudShow('hud-wrong');
+    setTimeout(() => hudHide('hud-wrong'), 1600);
+  }
+});
+
+/* ── Room & floor switching ──────────────────────────────────────────*/
+function switchRoom(name) {
+  SIM.room  = name;
+  SIM.state = 'EXPLORE';
+  SIM.inspecting = null;
+  SIM.dragging   = null;
+
+  // show/hide room groups
+  document.getElementById('room-fire').setAttribute('visible', name === 'fire');
+  document.getElementById('room-site').setAttribute('visible', name === 'site');
+
+  // update room buttons
+  document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.room-btn.' + (name === 'fire' ? 'fire' : 'site')).classList.add('active');
+
+  if (name === 'site') {
+    hudShow('hud-floors');
+    selectFloor(0);
+  } else {
+    hudHide('hud-floors');
+  }
+  hudHide('hud-inspect');
+  hudHide('hud-resolved');
+  hudShow('hud-rooms');
+  hudShow('crosshair');
+}
+
+function selectFloor(idx) {
+  SIM.activeFloor = idx;
+  SIM.allFloors   = false;
+  for (let i = 0; i < 3; i++) {
+    document.getElementById('floor-' + i).setAttribute('visible', i === idx);
+    const btn = document.getElementById('fbtn-' + i);
+    btn.classList.toggle('active', i === idx);
+  }
+}
+
+function showAllFloors() {
+  SIM.allFloors = true;
+  for (let i = 0; i < 3; i++) {
+    document.getElementById('floor-' + i).setAttribute('visible', true);
+    document.getElementById('fbtn-' + i).classList.remove('active');
+  }
+}
+
+function nextRoom() {
+  hudHide('hud-resolved');
+  const next = SIM.room === 'fire' ? 'site' : 'fire';
+  // re-show all items
+  document.querySelectorAll('[inspectable]').forEach(el => el.setAttribute('visible', true));
+  switchRoom(next);
+}
+</script>
+
+<!-- ══════════════════ AR SCENE ════════════════════════════════════════ -->
+<a-scene
+  embedded
+  arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix;"
+  renderer="logarithmicDepthBuffer: true; precision: medium;"
+  vr-mode-ui="enabled: false"
+>
+
+  <a-assets>
+    <!-- Rooms -->
+    <a-asset-item id="asset-fire-room"     src="rooms/fire_room.glb"></a-asset-item>
+    <a-asset-item id="asset-site-ground"   src="rooms/site_ground.glb"></a-asset-item>
+    <a-asset-item id="asset-site-floor1"   src="rooms/site_floor1.glb"></a-asset-item>
+    <a-asset-item id="asset-site-floor2"   src="rooms/site_floor2.glb"></a-asset-item>
+    <!-- Interactables -->
+    <a-asset-item id="asset-water"         src="objects/water_bucket.glb"></a-asset-item>
+    <a-asset-item id="asset-extinguisher"  src="objects/extinguisher.glb"></a-asset-item>
+    <a-asset-item id="asset-blanket"       src="objects/blanket.glb"></a-asset-item>
+    <a-asset-item id="asset-sand"          src="objects/sand_bucket.glb"></a-asset-item>
+    <a-asset-item id="asset-gloves"        src="objects/gloves.glb"></a-asset-item>
+    <a-asset-item id="asset-cone"          src="objects/cone.glb"></a-asset-item>
+  </a-assets>
+
+  <a-marker preset="hiro" drag-on-marker>
+
+    <!-- ══════════════════════════════════════════════════════════════
+         ROOM 0 — FIRE ROOM
+         Event: fire in the corner. Solution: water bucket or extinguisher.
+         Distractors: blanket (wrong for this scenario, gives feedback)
+    ════════════════════════════════════════════════════════════════ -->
+    <a-entity id="room-fire">
+
+      <!-- Room shell with transparent front wall -->
+      <a-entity
+        gltf-model="#asset-fire-room"
+        wall-transparency="frontMesh: Wall_Front"
+        scale="0.3 0.3 0.3"
+        position="0 0 0"
+      ></a-entity>
+
+      <!-- 🔥 Fire event trigger (animated particle system / GLB clip) -->
+      <a-entity
+        id="fire-event"
+        event-trigger
+        gltf-model="#asset-fire-room"
+        animation-mixer="clip: FireLoop; loop: repeat"
+        position="0 0.01 -0.09"
+        scale="0.035 0.035 0.035"
+      ></a-entity>
+
+      <!-- Drop zone sitting on the fire -->
+      <a-entity
+        drop-zone="accepts: water; radius: 0.11"
+        position="0 0.01 -0.09"
+      ></a-entity>
+
+      <!-- Water bucket — correct solution -->
+      <a-entity
+        gltf-model="#asset-water"
+        position="-0.09 0.01 0.06"
+        scale="0.055 0.055 0.055"
+        inspectable="label: Water bucket; sublabel: Use on small fires; itemType: water"
+        animation-mixer
+      ></a-entity>
+
+      <!-- Extinguisher — also correct -->
+      <a-entity
+        gltf-model="#asset-extinguisher"
+        position="0.09 0.01 0.05"
+        scale="0.06 0.06 0.06"
+        inspectable="label: CO₂ extinguisher; sublabel: For contained fires; itemType: water"
+        animation-mixer
+      ></a-entity>
+
+      <!-- Blanket — wrong for this fire scenario -->
+      <a-entity
+        gltf-model="#asset-blanket"
+        position="0 0.01 0.07"
+        scale="0.05 0.05 0.05"
+        inspectable="label: Fire blanket; sublabel: For covering a person; itemType: blanket"
+      ></a-entity>
+
+    </a-entity>
+
+
+    <!-- ══════════════════════════════════════════════════════════════
+         ROOM 1 — CONSTRUCTION SITE (3 floors, hidden by default)
+         Event: electrical fault on ground floor.
+         Solution: dry-powder extinguisher (NOT water — electric hazard).
+    ════════════════════════════════════════════════════════════════ -->
+    <a-entity id="room-site" visible="false">
+
+      <!-- ── Ground floor ──────────────────────────────────────────── -->
+      <a-entity id="floor-0">
+
+        <a-entity
+          gltf-model="#asset-site-ground"
+          wall-transparency="frontMesh: Wall_Front"
+          scale="0.3 0.3 0.3"
+          position="0 0 0"
+        ></a-entity>
+
+        <!-- Electrical fault sparks -->
+        <a-entity
+          id="site-event"
+          event-trigger
+          gltf-model="#asset-site-ground"
+          animation-mixer="clip: SparkLoop; loop: repeat"
+          position="0.06 0.01 -0.07"
+          scale="0.035 0.035 0.035"
+        ></a-entity>
+
+        <!-- Drop zone on the fault -->
+        <a-entity
+          drop-zone="accepts: extinguisher; radius: 0.11"
+          position="0.06 0.01 -0.07"
+        ></a-entity>
+
+        <!-- Dry-powder extinguisher — correct tool for electrical fire -->
+        <a-entity
+          gltf-model="#asset-extinguisher"
+          position="-0.08 0.01 0.06"
+          scale="0.065 0.065 0.065"
+          inspectable="label: Dry-powder extinguisher; sublabel: Safe on electrical fires; itemType: extinguisher"
+          animation-mixer
+        ></a-entity>
+
+        <!-- Water bucket — WRONG (electric fire) -->
+        <a-entity
+          gltf-model="#asset-water"
+          position="0.07 0.01 0.06"
+          scale="0.05 0.05 0.05"
+          inspectable="label: Water bucket; sublabel: Dangerous near electricity!; itemType: water"
+        ></a-entity>
+
+        <!-- Safety cone -->
+        <a-entity
+          gltf-model="#asset-cone"
+          position="-0.02 0.01 -0.04"
+          scale="0.04 0.04 0.04"
+          inspectable="label: Safety cone; sublabel: Mark the hazard zone; itemType: cone"
+        ></a-entity>
+
+      </a-entity>
+      <!-- /floor-0 -->
+
+      <!-- ── First floor ────────────────────────────────────────────── -->
+      <a-entity id="floor-1" visible="false">
+
+        <a-entity
+          gltf-model="#asset-site-floor1"
+          wall-transparency="frontMesh: Wall_Front"
+          scale="0.3 0.3 0.3"
+          position="0 0.12 0"
+        ></a-entity>
+
+        <!-- Workers' gear scattered around -->
+        <a-entity
+          gltf-model="#asset-gloves"
+          position="-0.07 0.13 0.04"
+          scale="0.04 0.04 0.04"
+          inspectable="label: Safety gloves; sublabel: Inspect PPE condition; itemType: gloves"
+        ></a-entity>
+
+        <a-entity
+          gltf-model="#asset-sand"
+          position="0.06 0.13 0.03"
+          scale="0.05 0.05 0.05"
+          inspectable="label: Sand bucket; sublabel: For small ground fires; itemType: sand"
+        ></a-entity>
+
+      </a-entity>
+      <!-- /floor-1 -->
+
+      <!-- ── Second floor ───────────────────────────────────────────── -->
+      <a-entity id="floor-2" visible="false">
+
+        <a-entity
+          gltf-model="#asset-site-floor2"
+          wall-transparency="frontMesh: Wall_Front"
+          scale="0.3 0.3 0.3"
+          position="0 0.24 0"
+        ></a-entity>
+
+        <!-- Extinguisher stored on upper floor -->
+        <a-entity
+          gltf-model="#asset-extinguisher"
+          position="0.05 0.25 0.05"
+          scale="0.055 0.055 0.055"
+          inspectable="label: Backup extinguisher; sublabel: CO₂ type; itemType: extinguisher"
+          animation-mixer
+        ></a-entity>
+
+        <a-entity
+          gltf-model="#asset-blanket"
+          position="-0.05 0.25 0.05"
+          scale="0.045 0.045 0.045"
+          inspectable="label: Fire blanket; sublabel: Emergency personal cover; itemType: blanket"
+        ></a-entity>
+
+      </a-entity>
+      <!-- /floor-2 -->
+
+    </a-entity>
+    <!-- /room-site -->
+
+  </a-marker>
+
+  <!-- Camera with raycaster for tapping inspectable objects -->
+  <a-entity camera>
+    <a-entity
+      cursor="fuse: false; rayOrigin: mouse"
+      raycaster="objects: [inspectable]; recursive: true"
+    ></a-entity>
+  </a-entity>
+
+</a-scene>
+
+<!-- ── Marker found/lost: toggle hint ────────────────────────────────── -->
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const marker = document.querySelector('a-marker');
+  const hint   = document.getElementById('hud-hint');
+  if (!marker) return;
+  marker.addEventListener('markerFound', () => {
+    hint.style.opacity = '0';
+    setTimeout(() => hint.style.display = 'none', 400);
+  });
+  marker.addEventListener('markerLost', () => {
+    hint.style.display = 'block';
+    setTimeout(() => hint.style.opacity = '1', 10);
+  });
+});
+</script>
+
+</body>
+</html>
